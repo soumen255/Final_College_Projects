@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime
 import csv
 import os
+import hashlib
+import secrets
 
 class ProfessionalCollegeGradeSystem:
     def __init__(self, root):
@@ -12,21 +14,259 @@ class ProfessionalCollegeGradeSystem:
         self.root.geometry("1500x900")
         self.root.state('zoomed')  # Start maximized
         
+        # Security variables
+        self.logged_in = False
+        self.admin_username = ""
+        self.login_attempts = 0
+        self.max_login_attempts = 3
+        self.locked_out = False
+        
         # Style configuration
         self.setup_styles()
         
-        # Initialize database
+        # Initialize database (including security tables)
         self.init_database()
         
+        # Show login screen first
+        self.show_login_screen()
+        
+    def show_login_screen(self):
+        """Display the login screen"""
+        self.login_frame = ttk.Frame(self.root, padding="50")
+        self.login_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(self.login_frame, text="🔒 College Grade Management System", 
+                               font=('Arial', 20, 'bold'), foreground='#2c3e50')
+        title_label.pack(pady=20)
+        
+        subtitle_label = ttk.Label(self.login_frame, text="Administrator Login Required", 
+                                  font=('Arial', 12), foreground='#7f8c8d')
+        subtitle_label.pack(pady=5)
+        
+        # Login container
+        login_container = ttk.LabelFrame(self.login_frame, text="Admin Authentication", padding="30")
+        login_container.pack(pady=30, ipadx=20, ipady=20)
+        
+        # Username
+        ttk.Label(login_container, text="Username:", font=('Arial', 11)).grid(row=0, column=0, sticky=tk.W, pady=10, padx=5)
+        self.username_entry = ttk.Entry(login_container, width=25, font=('Arial', 11))
+        self.username_entry.grid(row=0, column=1, pady=10, padx=10, sticky=(tk.W, tk.E))
+        self.username_entry.focus()
+        
+        # Password
+        ttk.Label(login_container, text="Password:", font=('Arial', 11)).grid(row=1, column=0, sticky=tk.W, pady=10, padx=5)
+        self.password_entry = ttk.Entry(login_container, width=25, font=('Arial', 11), show="•")
+        self.password_entry.grid(row=1, column=1, pady=10, padx=10, sticky=(tk.W, tk.E))
+        
+        # Bind Enter key to login
+        self.username_entry.bind('<Return>', lambda e: self.password_entry.focus())
+        self.password_entry.bind('<Return>', lambda e: self.login())
+        
+        # Buttons
+        button_frame = ttk.Frame(login_container)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=20)
+        
+        ttk.Button(button_frame, text="🔑 Login", command=self.login, 
+                  style='Primary.TButton').pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="🔄 Reset Password", command=self.show_reset_dialog).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="❌ Exit", command=self.root.quit).pack(side=tk.LEFT, padx=10)
+        
+        # Status label
+        self.login_status_label = ttk.Label(login_container, text="", foreground="red")
+        self.login_status_label.grid(row=3, column=0, columnspan=2, pady=10)
+        
+        # Configure grid weights
+        login_container.columnconfigure(1, weight=1)
+        
+        # Security notice
+        notice_label = ttk.Label(self.login_frame, 
+                                text="⚠️ Unauthorized access is prohibited. All activities are logged.",
+                                font=('Arial', 9), foreground='#e74c3c')
+        notice_label.pack(pady=20)
+        
+    def show_reset_dialog(self):
+        """Show password reset dialog"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Reset Admin Password")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="🔐 Password Reset", font=('Arial', 14, 'bold')).pack(pady=20)
+        
+        # Security question frame
+        security_frame = ttk.LabelFrame(dialog, text="Security Verification", padding="15")
+        security_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Label(security_frame, text="Security Question:").pack(anchor=tk.W)
+        security_question = ttk.Label(security_frame, text="What is the default admin password?", 
+                                    font=('Arial', 9, 'italic'))
+        security_question.pack(anchor=tk.W, pady=5)
+        
+        ttk.Label(security_frame, text="Answer:").pack(anchor=tk.W, pady=(10,0))
+        security_answer = ttk.Entry(security_frame, width=30, show="•")
+        security_answer.pack(fill=tk.X, pady=5)
+        
+        # New password frame
+        new_pass_frame = ttk.LabelFrame(dialog, text="New Password", padding="15")
+        new_pass_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Label(new_pass_frame, text="New Password:").pack(anchor=tk.W)
+        new_password = ttk.Entry(new_pass_frame, width=30, show="•")
+        new_password.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(new_pass_frame, text="Confirm Password:").pack(anchor=tk.W, pady=(10,0))
+        confirm_password = ttk.Entry(new_pass_frame, width=30, show="•")
+        confirm_password.pack(fill=tk.X, pady=5)
+        
+        # Status label
+        status_label = ttk.Label(dialog, text="", foreground="red")
+        status_label.pack(pady=10)
+        
+        def reset_password():
+            answer = security_answer.get().strip()
+            new_pass = new_password.get().strip()
+            confirm_pass = confirm_password.get().strip()
+            
+            if not all([answer, new_pass, confirm_pass]):
+                status_label.config(text="Please fill all fields!")
+                return
+            
+            if new_pass != confirm_pass:
+                status_label.config(text="Passwords do not match!")
+                return
+            
+            if len(new_pass) < 4:
+                status_label.config(text="Password must be at least 4 characters!")
+                return
+            
+            # Check security answer (default admin password is "admin123")
+            if answer != "admin123":
+                status_label.config(text="Security answer incorrect!")
+                return
+            
+            # Reset password
+            salt = secrets.token_hex(16)
+            hashed_password = hashlib.sha256((new_pass + salt).encode()).hexdigest()
+            
+            self.cursor.execute('''
+                UPDATE admin_users SET password_hash=?, salt=?, last_password_change=?
+                WHERE username='admin'
+            ''', (hashed_password, salt, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            
+            self.conn.commit()
+            
+            # Log the password reset
+            self.log_security_event("PASSWORD_RESET", f"Password reset for admin user")
+            
+            messagebox.showinfo("Success", "Password reset successfully!\nYou can now login with the new password.")
+            dialog.destroy()
+        
+        ttk.Button(dialog, text="🔄 Reset Password", command=reset_password).pack(pady=10)
+        ttk.Button(dialog, text="❌ Cancel", command=dialog.destroy).pack(pady=5)
+        
+    def login(self):
+        """Handle login authentication"""
+        if self.locked_out:
+            self.login_status_label.config(text="Account locked. Please contact system administrator.")
+            return
+        
+        username = self.username_entry.get().strip()
+        password = self.password_entry.get().strip()
+        
+        if not username or not password:
+            self.login_status_label.config(text="Please enter both username and password!")
+            return
+        
+        # Get user from database
+        self.cursor.execute('''
+            SELECT username, password_hash, salt, is_locked 
+            FROM admin_users WHERE username=?
+        ''', (username,))
+        
+        user = self.cursor.fetchone()
+        
+        if not user:
+            self.login_attempts += 1
+            self.log_security_event("LOGIN_FAILED", f"Failed login attempt for non-existent user: {username}")
+            self.login_status_label.config(text="Invalid username or password!")
+            self.check_lockout()
+            return
+        
+        db_username, db_password_hash, salt, is_locked = user
+        
+        if is_locked:
+            self.login_status_label.config(text="Account locked. Please contact system administrator.")
+            self.locked_out = True
+            return
+        
+        # Verify password
+        hashed_input = hashlib.sha256((password + salt).encode()).hexdigest()
+        
+        if hashed_input == db_password_hash:
+            # Successful login
+            self.logged_in = True
+            self.admin_username = username
+            self.login_attempts = 0
+            
+            # Update last login
+            self.cursor.execute('''
+                UPDATE admin_users SET last_login=?, login_attempts=0 
+                WHERE username=?
+            ''', (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username))
+            self.conn.commit()
+            
+            # Log successful login
+            self.log_security_event("LOGIN_SUCCESS", f"Successful login for user: {username}")
+            
+            # Destroy login frame and show main application
+            self.login_frame.destroy()
+            self.setup_main_application()
+            
+        else:
+            # Failed login
+            self.login_attempts += 1
+            self.cursor.execute('''
+                UPDATE admin_users SET login_attempts=login_attempts+1 
+                WHERE username=?
+            ''', (username,))
+            self.conn.commit()
+            
+            self.log_security_event("LOGIN_FAILED", f"Failed login attempt for user: {username}")
+            self.login_status_label.config(text=f"Invalid username or password! Attempts: {self.login_attempts}/{self.max_login_attempts}")
+            self.check_lockout()
+    
+    def check_lockout(self):
+        """Check if account should be locked due to failed attempts"""
+        if self.login_attempts >= self.max_login_attempts:
+            self.locked_out = True
+            username = self.username_entry.get().strip()
+            
+            # Lock the account in database
+            self.cursor.execute('''
+                UPDATE admin_users SET is_locked=1, lockout_time=?
+                WHERE username=?
+            ''', (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username))
+            self.conn.commit()
+            
+            self.log_security_event("ACCOUNT_LOCKED", f"Account locked due to failed login attempts: {username}")
+            self.login_status_label.config(text="Account locked! Too many failed attempts.")
+    
+    def setup_main_application(self):
+        """Setup the main application after successful login"""
         # Create main frame
         self.main_frame = ttk.Frame(self.root, padding="10")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create header with user info and logout button
+        self.create_header()
         
         # Create notebook for tabs
         self.notebook = ttk.Notebook(self.main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Create tabs (removed overview tab)
+        # Create tabs
         self.department_tab = ttk.Frame(self.notebook)
         self.section_tab = ttk.Frame(self.notebook)
         self.subject_tab = ttk.Frame(self.notebook)
@@ -34,6 +274,7 @@ class ProfessionalCollegeGradeSystem:
         self.theory_grade_tab = ttk.Frame(self.notebook)
         self.practical_grade_tab = ttk.Frame(self.notebook)
         self.student_report_tab = ttk.Frame(self.notebook)
+        self.admin_tab = ttk.Frame(self.notebook)  # New admin tab
         
         self.notebook.add(self.department_tab, text="🏛️ Department Setup")
         self.notebook.add(self.section_tab, text="📁 Section Management")
@@ -42,6 +283,7 @@ class ProfessionalCollegeGradeSystem:
         self.notebook.add(self.theory_grade_tab, text="📖 Theory Grade Entry")
         self.notebook.add(self.practical_grade_tab, text="🔬 Practical Grade Entry")
         self.notebook.add(self.student_report_tab, text="📊 Student Report")
+        self.notebook.add(self.admin_tab, text="⚙️ Admin Settings")  # New admin tab
         
         # Setup all tabs
         self.setup_department_tab()
@@ -51,6 +293,7 @@ class ProfessionalCollegeGradeSystem:
         self.setup_theory_grade_tab()
         self.setup_practical_grade_tab()
         self.setup_student_report_tab()
+        self.setup_admin_tab()  # Setup admin tab
         
         # Load initial data
         self.load_departments()
@@ -58,6 +301,50 @@ class ProfessionalCollegeGradeSystem:
         self.load_subjects()
         self.load_students()
         
+    def create_header(self):
+        """Create header with user info and controls"""
+        header_frame = ttk.Frame(self.main_frame, relief='raised', borderwidth=1)
+        header_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Welcome message
+        welcome_label = ttk.Label(header_frame, text=f"👤 Welcome, {self.admin_username}", 
+                                font=('Arial', 12, 'bold'))
+        welcome_label.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        # Current time
+        self.time_label = ttk.Label(header_frame, text="", font=('Arial', 10))
+        self.time_label.pack(side=tk.LEFT, padx=10, pady=5)
+        self.update_time()
+        
+        # Logout button
+        logout_btn = ttk.Button(header_frame, text="🚪 Logout", command=self.logout)
+        logout_btn.pack(side=tk.RIGHT, padx=10, pady=5)
+        
+        # Security events button
+        security_btn = ttk.Button(header_frame, text="📋 Security Log", command=self.show_security_log)
+        security_btn.pack(side=tk.RIGHT, padx=5, pady=5)
+    
+    def update_time(self):
+        """Update current time in header"""
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.time_label.config(text=current_time)
+        self.root.after(1000, self.update_time)
+    
+    def logout(self):
+        """Handle user logout"""
+        result = messagebox.askyesno("Confirm Logout", "Are you sure you want to logout?")
+        if result:
+            # Log the logout event
+            self.log_security_event("LOGOUT", f"User {self.admin_username} logged out")
+            
+            # Destroy main application and show login screen
+            self.main_frame.destroy()
+            self.logged_in = False
+            self.admin_username = ""
+            self.login_attempts = 0
+            self.locked_out = False
+            self.show_login_screen()
+    
     def setup_styles(self):
         """Configure modern styles for the application"""
         style = ttk.Style()
@@ -75,9 +362,39 @@ class ProfessionalCollegeGradeSystem:
         style.configure('Primary.TButton', background='#0078D7', foreground='white')
         
     def init_database(self):
-        """Initialize SQLite database with professional structure - PRESERVE EXISTING DATA"""
+        """Initialize SQLite database with professional structure and security tables"""
         self.conn = sqlite3.connect('professional_college_system.db')
         self.cursor = self.conn.cursor()
+        
+        # Create admin users table
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                full_name TEXT,
+                email TEXT,
+                is_locked INTEGER DEFAULT 0,
+                login_attempts INTEGER DEFAULT 0,
+                last_login TIMESTAMP,
+                last_password_change TIMESTAMP,
+                lockout_time TIMESTAMP,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Create security logs table
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS security_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                username TEXT,
+                ip_address TEXT DEFAULT 'localhost',
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
         # Create departments table if not exists
         self.cursor.execute('''
@@ -197,8 +514,562 @@ class ProfessionalCollegeGradeSystem:
         
         self.conn.commit()
         
+        # Initialize admin user if not exists
+        self.initialize_admin_user()
+        
         # Check if database is empty and insert sample data only if needed
         self.insert_sample_data_if_empty()
+    
+    def initialize_admin_user(self):
+        """Initialize default admin user if not exists"""
+        self.cursor.execute("SELECT COUNT(*) FROM admin_users WHERE username='admin'")
+        admin_count = self.cursor.fetchone()[0]
+        
+        if admin_count == 0:
+            # Create default admin user with password "admin123"
+            salt = secrets.token_hex(16)
+            default_password = "admin123"
+            hashed_password = hashlib.sha256((default_password + salt).encode()).hexdigest()
+            
+            self.cursor.execute('''
+                INSERT INTO admin_users 
+                (username, password_hash, salt, full_name, email, last_password_change)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', ('admin', hashed_password, salt, 'System Administrator', 'admin@college.edu', 
+                  datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            
+            self.conn.commit()
+            print("Default admin user created with password: admin123")
+    
+    def log_security_event(self, event_type, description):
+        """Log security events to database"""
+        try:
+            self.cursor.execute('''
+                INSERT INTO security_logs (event_type, description, username)
+                VALUES (?, ?, ?)
+            ''', (event_type, description, self.admin_username if hasattr(self, 'admin_username') else 'Unknown'))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error logging security event: {e}")
+    
+    def setup_admin_tab(self):
+        """Setup admin settings and security tab"""
+        main_frame = ttk.Frame(self.admin_tab)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create notebook for admin settings
+        admin_notebook = ttk.Notebook(main_frame)
+        admin_notebook.pack(fill=tk.BOTH, expand=True)
+        
+        # User Management Tab
+        user_tab = ttk.Frame(admin_notebook)
+        admin_notebook.add(user_tab, text="👥 User Management")
+        
+        # Security Logs Tab
+        security_tab = ttk.Frame(admin_notebook)
+        admin_notebook.add(security_tab, text="📋 Security Logs")
+        
+        # System Info Tab
+        system_tab = ttk.Frame(admin_notebook)
+        admin_notebook.add(system_tab, text="⚙️ System Info")
+        
+        self.setup_user_management_tab(user_tab)
+        self.setup_security_logs_tab(security_tab)
+        self.setup_system_info_tab(system_tab)
+    
+    def setup_user_management_tab(self, parent):
+        """Setup user management section"""
+        # Left frame - User form
+        left_frame = ttk.LabelFrame(parent, text="User Information", padding="15")
+        left_frame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        ttk.Label(left_frame, text="Username *:", font=('Arial', 10)).grid(row=0, column=0, sticky=tk.W, pady=8)
+        self.admin_username_entry = ttk.Entry(left_frame, width=25, font=('Arial', 10))
+        self.admin_username_entry.grid(row=0, column=1, pady=8, padx=10, sticky=(tk.W, tk.E))
+        
+        ttk.Label(left_frame, text="Full Name:", font=('Arial', 10)).grid(row=1, column=0, sticky=tk.W, pady=8)
+        self.admin_fullname_entry = ttk.Entry(left_frame, width=30, font=('Arial', 10))
+        self.admin_fullname_entry.grid(row=1, column=1, pady=8, padx=10, sticky=(tk.W, tk.E))
+        
+        ttk.Label(left_frame, text="Email:", font=('Arial', 10)).grid(row=2, column=0, sticky=tk.W, pady=8)
+        self.admin_email_entry = ttk.Entry(left_frame, width=30, font=('Arial', 10))
+        self.admin_email_entry.grid(row=2, column=1, pady=8, padx=10, sticky=(tk.W, tk.E))
+        
+        ttk.Label(left_frame, text="New Password:", font=('Arial', 10)).grid(row=3, column=0, sticky=tk.W, pady=8)
+        self.admin_password_entry = ttk.Entry(left_frame, width=25, font=('Arial', 10), show="•")
+        self.admin_password_entry.grid(row=3, column=1, pady=8, padx=10, sticky=(tk.W, tk.E))
+        
+        ttk.Label(left_frame, text="Confirm Password:", font=('Arial', 10)).grid(row=4, column=0, sticky=tk.W, pady=8)
+        self.admin_confirm_entry = ttk.Entry(left_frame, width=25, font=('Arial', 10), show="•")
+        self.admin_confirm_entry.grid(row=4, column=1, pady=8, padx=10, sticky=(tk.W, tk.E))
+        
+        # Buttons
+        button_frame = ttk.Frame(left_frame)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=15)
+        
+        ttk.Button(button_frame, text="➕ Add User", command=self.add_admin_user).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="🔄 Update User", command=self.update_admin_user).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="🔓 Unlock User", command=self.unlock_admin_user).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="🗑️ Delete User", command=self.delete_admin_user).pack(side=tk.LEFT, padx=5)
+        
+        # Right frame - User list
+        right_frame = ttk.LabelFrame(parent, text="Admin Users", padding="15")
+        right_frame.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Treeview for admin users
+        columns = ("username", "full_name", "email", "last_login", "login_attempts", "is_locked")
+        self.admin_tree = ttk.Treeview(right_frame, columns=columns, show="headings", height=15)
+        
+        headings = {
+            "username": "Username",
+            "full_name": "Full Name",
+            "email": "Email",
+            "last_login": "Last Login",
+            "login_attempts": "Login Attempts",
+            "is_locked": "Locked"
+        }
+        
+        for col, text in headings.items():
+            self.admin_tree.heading(col, text=text)
+            self.admin_tree.column(col, width=100)
+        
+        self.admin_tree.column("username", width=120)
+        self.admin_tree.column("full_name", width=150)
+        self.admin_tree.column("email", width=150)
+        self.admin_tree.column("last_login", width=150)
+        
+        self.admin_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(right_frame, orient=tk.VERTICAL, command=self.admin_tree.yview)
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.admin_tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Bind selection event
+        self.admin_tree.bind("<<TreeviewSelect>>", self.on_admin_user_select)
+        
+        # Load admin users
+        self.load_admin_users()
+        
+        # Configure grid weights
+        parent.columnconfigure(0, weight=1)
+        parent.columnconfigure(1, weight=2)
+        parent.rowconfigure(0, weight=1)
+        left_frame.columnconfigure(1, weight=1)
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(0, weight=1)
+    
+    def setup_security_logs_tab(self, parent):
+        """Setup security logs viewer"""
+        # Filter frame
+        filter_frame = ttk.Frame(parent)
+        filter_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Label(filter_frame, text="Event Type:").pack(side=tk.LEFT, padx=5)
+        self.event_type_combo = ttk.Combobox(filter_frame, width=15, 
+                                           values=["All", "LOGIN_SUCCESS", "LOGIN_FAILED", "LOGOUT", 
+                                                  "PASSWORD_RESET", "ACCOUNT_LOCKED", "USER_CREATED", 
+                                                  "USER_DELETED"])
+        self.event_type_combo.pack(side=tk.LEFT, padx=5)
+        self.event_type_combo.set("All")
+        
+        ttk.Label(filter_frame, text="Date From:").pack(side=tk.LEFT, padx=5)
+        self.date_from_entry = ttk.Entry(filter_frame, width=12)
+        self.date_from_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(filter_frame, text="To:").pack(side=tk.LEFT, padx=5)
+        self.date_to_entry = ttk.Entry(filter_frame, width=12)
+        self.date_to_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(filter_frame, text="🔍 Filter", command=self.load_security_logs).pack(side=tk.LEFT, padx=5)
+        ttk.Button(filter_frame, text="🔄 Clear", command=self.clear_security_filters).pack(side=tk.LEFT, padx=5)
+        ttk.Button(filter_frame, text="📤 Export Logs", command=self.export_security_logs).pack(side=tk.LEFT, padx=5)
+        
+        # Treeview for security logs
+        columns = ("timestamp", "event_type", "username", "description")
+        self.security_tree = ttk.Treeview(parent, columns=columns, show="headings", height=20)
+        
+        headings = {
+            "timestamp": "Timestamp",
+            "event_type": "Event Type",
+            "username": "Username",
+            "description": "Description"
+        }
+        
+        for col, text in headings.items():
+            self.security_tree.heading(col, text=text)
+            self.security_tree.column(col, width=150)
+        
+        self.security_tree.column("description", width=300)
+        self.security_tree.column("timestamp", width=180)
+        
+        self.security_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.security_tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.security_tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Load security logs
+        self.load_security_logs()
+    
+    def setup_system_info_tab(self, parent):
+        """Setup system information tab"""
+        info_frame = ttk.LabelFrame(parent, text="System Information", padding="20")
+        info_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Database info
+        ttk.Label(info_frame, text="Database Information", font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=10)
+        
+        # Get database statistics
+        stats = self.get_database_stats()
+        
+        row = 1
+        for key, value in stats.items():
+            ttk.Label(info_frame, text=f"{key}:", font=('Arial', 10, 'bold')).grid(row=row, column=0, sticky=tk.W, pady=2, padx=5)
+            ttk.Label(info_frame, text=str(value)).grid(row=row, column=1, sticky=tk.W, pady=2, padx=5)
+            row += 1
+        
+        # System actions
+        action_frame = ttk.LabelFrame(parent, text="System Actions", padding="20")
+        action_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Button(action_frame, text="🔄 Refresh Statistics", command=self.refresh_system_info).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="💾 Backup Database", command=self.backup_database).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="🧹 Clear Old Logs", command=self.clear_old_logs).pack(side=tk.LEFT, padx=5)
+    
+    def load_admin_users(self):
+        """Load admin users into treeview"""
+        for item in self.admin_tree.get_children():
+            self.admin_tree.delete(item)
+        
+        self.cursor.execute('''
+            SELECT username, full_name, email, last_login, login_attempts, is_locked
+            FROM admin_users
+            ORDER BY username
+        ''')
+        
+        users = self.cursor.fetchall()
+        for user in users:
+            # Convert locked status to text
+            user_list = list(user)
+            user_list[5] = "Yes" if user[5] else "No"
+            self.admin_tree.insert("", tk.END, values=user_list)
+    
+    def load_security_logs(self, event_type="All", date_from=None, date_to=None):
+        """Load security logs with filtering"""
+        for item in self.security_tree.get_children():
+            self.security_tree.delete(item)
+        
+        query = '''
+            SELECT timestamp, event_type, username, description
+            FROM security_logs
+            WHERE 1=1
+        '''
+        params = []
+        
+        event_type_filter = self.event_type_combo.get()
+        if event_type_filter != "All":
+            query += " AND event_type = ?"
+            params.append(event_type_filter)
+        
+        date_from = self.date_from_entry.get().strip()
+        date_to = self.date_to_entry.get().strip()
+        
+        if date_from:
+            query += " AND DATE(timestamp) >= ?"
+            params.append(date_from)
+        
+        if date_to:
+            query += " AND DATE(timestamp) <= ?"
+            params.append(date_to)
+        
+        query += " ORDER BY timestamp DESC LIMIT 1000"
+        
+        self.cursor.execute(query, params)
+        logs = self.cursor.fetchall()
+        
+        for log in logs:
+            self.security_tree.insert("", tk.END, values=log)
+    
+    def get_database_stats(self):
+        """Get database statistics"""
+        stats = {}
+        
+        # Table counts
+        tables = ['departments', 'sections', 'subjects', 'students', 'theory_grades', 'practical_grades', 'admin_users', 'security_logs']
+        
+        for table in tables:
+            try:
+                self.cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                count = self.cursor.fetchone()[0]
+                stats[f"{table.capitalize()}"] = count
+            except:
+                stats[f"{table.capitalize()}"] = "N/A"
+        
+        # Database size
+        try:
+            self.cursor.execute("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()")
+            db_size = self.cursor.fetchone()[0]
+            stats["Database Size"] = f"{db_size / (1024*1024):.2f} MB"
+        except:
+            stats["Database Size"] = "Unknown"
+        
+        # Last backup (placeholder)
+        stats["Last Backup"] = "Never"
+        
+        return stats
+    
+    def add_admin_user(self):
+        """Add new admin user"""
+        username = self.admin_username_entry.get().strip()
+        full_name = self.admin_fullname_entry.get().strip()
+        email = self.admin_email_entry.get().strip()
+        password = self.admin_password_entry.get().strip()
+        confirm_password = self.admin_confirm_entry.get().strip()
+        
+        if not username or not password:
+            messagebox.showerror("Error", "Username and password are required!")
+            return
+        
+        if password != confirm_password:
+            messagebox.showerror("Error", "Passwords do not match!")
+            return
+        
+        if len(password) < 4:
+            messagebox.showerror("Error", "Password must be at least 4 characters!")
+            return
+        
+        # Hash password
+        salt = secrets.token_hex(16)
+        hashed_password = hashlib.sha256((password + salt).encode()).hexdigest()
+        
+        try:
+            self.cursor.execute('''
+                INSERT INTO admin_users (username, password_hash, salt, full_name, email, last_password_change)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (username, hashed_password, salt, full_name, email, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            
+            self.conn.commit()
+            
+            # Log the user creation
+            self.log_security_event("USER_CREATED", f"New admin user created: {username}")
+            
+            messagebox.showinfo("Success", "Admin user added successfully!")
+            self.load_admin_users()
+            self.clear_admin_form()
+            
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Error", "Username already exists!")
+    
+    def update_admin_user(self):
+        """Update admin user information"""
+        username = self.admin_username_entry.get().strip()
+        full_name = self.admin_fullname_entry.get().strip()
+        email = self.admin_email_entry.get().strip()
+        password = self.admin_password_entry.get().strip()
+        
+        if not username:
+            messagebox.showerror("Error", "Please select a user to update!")
+            return
+        
+        update_fields = []
+        params = []
+        
+        if full_name:
+            update_fields.append("full_name = ?")
+            params.append(full_name)
+        
+        if email:
+            update_fields.append("email = ?")
+            params.append(email)
+        
+        if password:
+            if len(password) < 4:
+                messagebox.showerror("Error", "Password must be at least 4 characters!")
+                return
+            
+            salt = secrets.token_hex(16)
+            hashed_password = hashlib.sha256((password + salt).encode()).hexdigest()
+            
+            update_fields.append("password_hash = ?")
+            update_fields.append("salt = ?")
+            update_fields.append("last_password_change = ?")
+            params.extend([hashed_password, salt, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+        
+        if not update_fields:
+            messagebox.showinfo("Info", "No changes to update!")
+            return
+        
+        update_query = f"UPDATE admin_users SET {', '.join(update_fields)} WHERE username = ?"
+        params.append(username)
+        
+        self.cursor.execute(update_query, params)
+        self.conn.commit()
+        
+        messagebox.showinfo("Success", "User updated successfully!")
+        self.load_admin_users()
+        self.clear_admin_form()
+    
+    def unlock_admin_user(self):
+        """Unlock admin user account"""
+        username = self.admin_username_entry.get().strip()
+        
+        if not username:
+            messagebox.showerror("Error", "Please select a user to unlock!")
+            return
+        
+        self.cursor.execute('''
+            UPDATE admin_users SET is_locked = 0, login_attempts = 0, lockout_time = NULL
+            WHERE username = ?
+        ''', (username,))
+        
+        self.conn.commit()
+        
+        # Log the unlock event
+        self.log_security_event("ACCOUNT_UNLOCKED", f"Admin user unlocked: {username}")
+        
+        messagebox.showinfo("Success", "User account unlocked successfully!")
+        self.load_admin_users()
+    
+    def delete_admin_user(self):
+        """Delete admin user"""
+        username = self.admin_username_entry.get().strip()
+        
+        if not username:
+            messagebox.showerror("Error", "Please select a user to delete!")
+            return
+        
+        if username == "admin":
+            messagebox.showerror("Error", "Cannot delete the default admin user!")
+            return
+        
+        if username == self.admin_username:
+            messagebox.showerror("Error", "Cannot delete your own account while logged in!")
+            return
+        
+        result = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete user '{username}'?")
+        if result:
+            self.cursor.execute("DELETE FROM admin_users WHERE username = ?", (username,))
+            self.conn.commit()
+            
+            # Log the user deletion
+            self.log_security_event("USER_DELETED", f"Admin user deleted: {username}")
+            
+            messagebox.showinfo("Success", "User deleted successfully!")
+            self.load_admin_users()
+            self.clear_admin_form()
+    
+    def on_admin_user_select(self, event):
+        """Handle admin user selection"""
+        selected = self.admin_tree.selection()
+        if selected:
+            item = selected[0]
+            values = self.admin_tree.item(item, 'values')
+            
+            self.clear_admin_form()
+            
+            self.admin_username_entry.insert(0, values[0])
+            self.admin_fullname_entry.insert(0, values[1])
+            self.admin_email_entry.insert(0, values[2])
+    
+    def clear_admin_form(self):
+        """Clear admin user form"""
+        self.admin_username_entry.delete(0, tk.END)
+        self.admin_fullname_entry.delete(0, tk.END)
+        self.admin_email_entry.delete(0, tk.END)
+        self.admin_password_entry.delete(0, tk.END)
+        self.admin_confirm_entry.delete(0, tk.END)
+    
+    def clear_security_filters(self):
+        """Clear security log filters"""
+        self.event_type_combo.set("All")
+        self.date_from_entry.delete(0, tk.END)
+        self.date_to_entry.delete(0, tk.END)
+        self.load_security_logs()
+    
+    def export_security_logs(self):
+        """Export security logs to CSV"""
+        try:
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                title="Export Security Logs"
+            )
+            
+            if filename:
+                self.cursor.execute('''
+                    SELECT timestamp, event_type, username, description
+                    FROM security_logs
+                    ORDER BY timestamp DESC
+                ''')
+                
+                logs = self.cursor.fetchall()
+                
+                with open(filename, 'w', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(['Timestamp', 'Event Type', 'Username', 'Description'])
+                    
+                    for log in logs:
+                        writer.writerow(log)
+                
+                messagebox.showinfo("Success", f"Security logs exported to {filename}")
+                
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export logs: {str(e)}")
+    
+    def refresh_system_info(self):
+        """Refresh system information"""
+        # This would refresh the system info tab
+        messagebox.showinfo("Info", "System information refreshed!")
+    
+    def backup_database(self):
+        """Create database backup"""
+        try:
+            backup_dir = filedialog.askdirectory(title="Select Backup Directory")
+            if backup_dir:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_file = os.path.join(backup_dir, f"college_system_backup_{timestamp}.db")
+                
+                # Create backup
+                backup_conn = sqlite3.connect(backup_file)
+                self.conn.backup(backup_conn)
+                backup_conn.close()
+                
+                # Log the backup event
+                self.log_security_event("DATABASE_BACKUP", f"Database backed up to: {backup_file}")
+                
+                messagebox.showinfo("Success", f"Database backed up successfully to:\n{backup_file}")
+                
+        except Exception as e:
+            messagebox.showerror("Backup Error", f"Failed to create backup: {str(e)}")
+    
+    def clear_old_logs(self):
+        """Clear security logs older than 90 days"""
+        result = messagebox.askyesno("Confirm", "Delete security logs older than 90 days?")
+        if result:
+            self.cursor.execute('''
+                DELETE FROM security_logs 
+                WHERE timestamp < datetime('now', '-90 days')
+            ''')
+            
+            deleted_count = self.cursor.rowcount
+            self.conn.commit()
+            
+            # Log the cleanup
+            self.log_security_event("LOGS_CLEANED", f"Cleared {deleted_count} old security logs")
+            
+            messagebox.showinfo("Success", f"Cleared {deleted_count} old security logs!")
+            self.load_security_logs()
+    
+    def show_security_log(self):
+        """Show security log dialog"""
+        self.notebook.select(self.admin_tab)
+        admin_notebook = self.admin_tab.winfo_children()[0]
+        admin_notebook.select(1)  # Select security logs tab
+    
+    # [ALL THE ORIGINAL METHODS FROM YOUR CODE REMAIN EXACTLY THE SAME]
+    # Only the security-related methods and admin tab methods have been added above
     
     def insert_sample_data_if_empty(self):
         """Insert professional sample data only if database is empty"""
@@ -1065,8 +1936,8 @@ class ProfessionalCollegeGradeSystem:
         self.current_semester_label = ttk.Label(summary_frame, text="-", font=('Arial', 14, 'bold'), foreground="purple")
         self.current_semester_label.pack(side=tk.LEFT, padx=5)
 
-    # [ALL THE REMAINING METHODS STAY EXACTLY THE SAME AS IN YOUR ORIGINAL CODE]
-    # Only the overview tab creation and setup methods have been removed
+    # [ALL THE REMAINING ORIGINAL METHODS STAY EXACTLY THE SAME]
+    # Only the security system and admin management methods have been added
 
     # Section Management Methods
     def load_sections(self, department=None):
