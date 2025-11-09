@@ -26,7 +26,7 @@ class ProfessionalCollegeGradeSystem:
         self.notebook = ttk.Notebook(self.main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Create tabs
+        # Create tabs (removed overview tab)
         self.department_tab = ttk.Frame(self.notebook)
         self.section_tab = ttk.Frame(self.notebook)
         self.subject_tab = ttk.Frame(self.notebook)
@@ -34,7 +34,6 @@ class ProfessionalCollegeGradeSystem:
         self.theory_grade_tab = ttk.Frame(self.notebook)
         self.practical_grade_tab = ttk.Frame(self.notebook)
         self.student_report_tab = ttk.Frame(self.notebook)
-        self.overview_tab = ttk.Frame(self.notebook)
         
         self.notebook.add(self.department_tab, text="🏛️ Department Setup")
         self.notebook.add(self.section_tab, text="📁 Section Management")
@@ -43,7 +42,6 @@ class ProfessionalCollegeGradeSystem:
         self.notebook.add(self.theory_grade_tab, text="📖 Theory Grade Entry")
         self.notebook.add(self.practical_grade_tab, text="🔬 Practical Grade Entry")
         self.notebook.add(self.student_report_tab, text="📊 Student Report")
-        self.notebook.add(self.overview_tab, text="📈 College Overview")
         
         # Setup all tabs
         self.setup_department_tab()
@@ -53,7 +51,6 @@ class ProfessionalCollegeGradeSystem:
         self.setup_theory_grade_tab()
         self.setup_practical_grade_tab()
         self.setup_student_report_tab()
-        self.setup_overview_tab()
         
         # Load initial data
         self.load_departments()
@@ -311,9 +308,6 @@ class ProfessionalCollegeGradeSystem:
             
             self.conn.commit()
             print("Sample data inserted successfully!")
-
-    # [ALL THE REST OF YOUR METHODS REMAIN EXACTLY THE SAME - NO CHANGES NEEDED]
-    # Only the database initialization part was modified to preserve data
 
     def setup_department_tab(self):
         """Setup department management tab"""
@@ -1071,64 +1065,8 @@ class ProfessionalCollegeGradeSystem:
         self.current_semester_label = ttk.Label(summary_frame, text="-", font=('Arial', 14, 'bold'), foreground="purple")
         self.current_semester_label.pack(side=tk.LEFT, padx=5)
 
-    def setup_overview_tab(self):
-        """Setup college overview tab"""
-        main_frame = ttk.Frame(self.overview_tab)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Statistics frame
-        stats_frame = ttk.LabelFrame(main_frame, text="College Statistics", padding="15")
-        stats_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        # Treeview for department stats
-        columns = ("department", "total_students", "avg_cgpa", "topper", "topper_cgpa", "pass_percentage")
-        self.stats_tree = ttk.Treeview(stats_frame, columns=columns, show="headings", height=12)
-        
-        headings = {
-            "department": "Department",
-            "total_students": "Total Students",
-            "avg_cgpa": "Average CGPA",
-            "topper": "Topper",
-            "topper_cgpa": "Topper CGPA",
-            "pass_percentage": "Pass %"
-        }
-        
-        for col, text in headings.items():
-            self.stats_tree.heading(col, text=text)
-            self.stats_tree.column(col, width=120)
-        
-        self.stats_tree.column("department", width=180)
-        self.stats_tree.column("topper", width=150)
-        
-        self.stats_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Control frame
-        control_frame = ttk.Frame(main_frame)
-        control_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Button(control_frame, text="🔄 Refresh Statistics", command=self.load_college_statistics,
-                  style='Action.TButton').pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="📊 Generate Report", command=self.generate_college_report).pack(side=tk.LEFT, padx=5)
-        
-        # Quick stats frame
-        quick_stats_frame = ttk.LabelFrame(main_frame, text="Quick Statistics", padding="10")
-        quick_stats_frame.pack(fill=tk.X, pady=5)
-        
-        stats_grid = ttk.Frame(quick_stats_frame)
-        stats_grid.pack(fill=tk.X, padx=10, pady=5)
-        
-        quick_stats = [
-            ("Total Departments:", "total_dept_label"),
-            ("Total Students:", "total_students_label"),
-            ("Total Subjects:", "total_subjects_label"),
-            ("College Average CGPA:", "college_avg_cgpa_label")
-        ]
-        
-        for i, (label, attr) in enumerate(quick_stats):
-            ttk.Label(stats_grid, text=label, font=('Arial', 10, 'bold')).grid(row=i//2, column=(i%2)*2, sticky=tk.W, pady=5, padx=10)
-            label_widget = ttk.Label(stats_grid, text="0", font=('Arial', 10, 'bold'), foreground="blue")
-            setattr(self, attr, label_widget)
-            label_widget.grid(row=i//2, column=(i%2)*2+1, sticky=tk.W, pady=5, padx=5)
+    # [ALL THE REMAINING METHODS STAY EXACTLY THE SAME AS IN YOUR ORIGINAL CODE]
+    # Only the overview tab creation and setup methods have been removed
 
     # Section Management Methods
     def load_sections(self, department=None):
@@ -2436,50 +2374,6 @@ class ProfessionalCollegeGradeSystem:
         
         if not semesters_with_data:
             messagebox.showinfo("Info", "No grade data found for the selected student!")
-
-    def load_college_statistics(self):
-        """Load college-wide statistics"""
-        # Clear existing data
-        for item in self.stats_tree.get_children():
-            self.stats_tree.delete(item)
-        
-        # Get all departments
-        self.cursor.execute("SELECT dept_id, dept_name FROM departments")
-        departments = self.cursor.fetchall()
-        
-        for dept_id, dept_name in departments:
-            # Count students in department
-            self.cursor.execute("SELECT COUNT(*) FROM students WHERE department=?", (dept_id,))
-            total_students = self.cursor.fetchone()[0]
-            
-            # For demo purposes, using sample data - in real application, calculate actual values
-            avg_cgpa = round(7.5 + (ord(dept_id[0]) % 3) * 0.5, 2)
-            topper = f"{dept_id}/2024/001"
-            topper_cgpa = round(8.5 + (ord(dept_id[0]) % 2) * 0.5, 2)
-            pass_percentage = f"{85 + (ord(dept_id[0]) % 10)}%"
-            
-            self.stats_tree.insert("", tk.END, values=(
-                dept_name, total_students, f"{avg_cgpa:.2f}", topper, f"{topper_cgpa:.2f}", pass_percentage
-            ))
-        
-        # Update quick statistics
-        self.cursor.execute("SELECT COUNT(*) FROM departments")
-        self.total_dept_label.config(text=str(self.cursor.fetchone()[0]))
-        
-        self.cursor.execute("SELECT COUNT(*) FROM students")
-        self.total_students_label.config(text=str(self.cursor.fetchone()[0]))
-        
-        self.cursor.execute("SELECT COUNT(*) FROM subjects")
-        self.total_subjects_label.config(text=str(self.cursor.fetchone()[0]))
-        
-        # Calculate college average CGPA (sample calculation)
-        self.college_avg_cgpa_label.config(text="7.85")
-
-    def generate_college_report(self):
-        """Generate college report"""
-        messagebox.showinfo("Report", "College report has been generated successfully!\n\n"
-                            "This feature creates a comprehensive report of all departments, "
-                            "students, and academic performance metrics.")
 
 def main():
     root = tk.Tk()
