@@ -10,7 +10,7 @@ import secrets
 class ProfessionalCollegeGradeSystem:
     def __init__(self, root):
         self.root = root
-        self.root.title("Professional College Grade Management System")
+        self.root.title("Bytebot's College Grade Management System")
         self.root.geometry("1500x900")
         self.root.state('zoomed')  # Start maximized
         
